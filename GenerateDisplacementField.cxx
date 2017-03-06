@@ -76,15 +76,7 @@ int main(int argc, char* argv[])
   thresholdFilter->ThresholdOutside(1,1);
   thresholdFilter->Update();
   toothMask = thresholdFilter->GetOutput();
-  
-  // Output plane image (verification, to be removed once we know it works)
-//  LabelImageType::Pointer planeImage = LabelImageType::New();
-//  planeImage->SetRegions(reader->GetOutput()->GetLargestPossibleRegion());
-//  planeImage->SetOrigin(reader->GetOutput()->GetOrigin());
-//  planeImage->SetSpacing(reader->GetOutput()->GetSpacing());
-//  planeImage->SetDirection(reader->GetOutput()->GetDirection());
-//  planeImage->Allocate(true);
-  
+    
   //Generate noise image
   typedef itk::LabelStatisticsImageFilter< InputImageType, LabelImageType > StatisticsFilterType;
   StatisticsFilterType::Pointer statisticsFilter = StatisticsFilterType::New();
@@ -118,23 +110,18 @@ int main(int argc, char* argv[])
   // This allows to verify the input equation of the plane
   typedef itk::ImageRegionIteratorWithIndex<InputImageType> InputIteratorType;
   typedef itk::ImageRegionIteratorWithIndex<LabelImageType> LabelIteratorType;
-//  LabelIteratorType it(planeImage,planeImage->GetLargestPossibleRegion());
   InputIteratorType itout(output,output->GetLargestPossibleRegion());
   InputIteratorType itnoise(clampFilter->GetOutput(),clampFilter->GetOutput()->GetLargestPossibleRegion());
   LabelIteratorType itmask(labelReader->GetOutput(),labelReader->GetOutput()->GetLargestPossibleRegion());
 
   for(itmask.GoToBegin(), itnoise.GoToBegin(), itout.GoToBegin(); !itout.IsAtEnd(); ++itmask, ++itnoise, ++itout)
   {
-//    if( itmask.Get() != 1)
-//    {
-//      itdisp.Set(v0);
-//      continue;
-//    }
     LabelImageType::IndexType index = itout.GetIndex();
     itk::Point<double,3> point;
     output->TransformIndexToPhysicalPoint(index, point);
     // Plane equation is assumed to be in RAS coordinate space (Slicer/VTK)
     // Point coordinates are in LPS (ITK)
+    // The plane equation is assumed to be of the form: ax+by+cz-d (See EasyClip extension in 3D Slicer)
     double val = -a*point[0]-b*point[1]+c*point[2]-d;
     if( std::abs(val) < displacement && itmask.Get() == toothLabel)
     {
@@ -145,7 +132,6 @@ int main(int argc, char* argv[])
     // Invert displacement field if on "other" side of plane
     if( val < 0)
     {
-//      it.Set(1);
       forwardDisplacement = -forwardDisplacement;
     }
     point+=forwardDisplacement;
@@ -157,19 +143,8 @@ int main(int argc, char* argv[])
       labelDuplicator->GetOutput()->SetPixel(index,toothLabel);
     }
   }
-  
-//  // Process one side of plane
-//  Process(reader->GetOutput(), labelReader->GetOutput(), planeImage, normal, displacement);
-//  // Process second side of plane
-//  Process(reader->GetOutput(), labelReader->GetOutput(), planeImage, normal, -displacement);
-  //Write plane image
-//  typedef itk::ImageFileWriter<LabelImageType> LabelWriterType;
-//  LabelWriterType::Pointer labelWriter = LabelWriterType::New();
-//  labelWriter->SetInput(planeImage);
-//  labelWriter->SetFileName(outputFileName);
-//  labelWriter->Update();
-  
-  // read reference image used to upsample output image
+
+  // Read reference image used to upsample output image
   typedef itk::Image<unsigned char,3> ReferenceImageType; // Just used for size, spacing,...
   typedef itk::ImageFileReader<InputImageType> ReferenceReaderType;
   ReferenceReaderType::Pointer referenceReader = ReferenceReaderType::New();

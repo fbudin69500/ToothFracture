@@ -6,6 +6,7 @@
 #include <itkAdditiveGaussianNoiseImageFilter.h>
 #include <itkClampImageFilter.h>
 #include <itkResampleImageFilter.h>
+#include <itkNearestNeighborInterpolateImageFunction.h>
 #include <itkImageDuplicator.h>
 #include <string>
 
@@ -47,11 +48,25 @@ int main(int argc, char* argv[])
   InputReaderType::Pointer reader = InputReaderType::New();
   reader->SetFileName(inputFileName);
   reader->Update();
+
+  // Read reference image used to resample input image (most likely upsample)
+  typedef itk::Image<unsigned char,3> ReferenceImageType; // Just used for size, spacing,...
+  typedef itk::ImageFileReader<InputImageType> ReferenceReaderType;
+  ReferenceReaderType::Pointer referenceReader = ReferenceReaderType::New();
+  referenceReader->SetFileName(referenceFileName);
+  referenceReader->Update();
+  
+  typedef itk::ResampleImageFilter<InputImageType,InputImageType> ResampleFilterType;
+  ResampleFilterType::Pointer resample = ResampleFilterType::New();
+  resample->SetInput(reader->GetOutput());
+  resample->SetReferenceImage(referenceReader->GetOutput());
+  resample->UseReferenceImageOn();
+  resample->Update();
   
   // Copy input image
   typedef itk::ImageDuplicator< InputImageType > DuplicatorType;
   DuplicatorType::Pointer duplicator = DuplicatorType::New();
-  duplicator->SetInputImage(reader->GetOutput());
+  duplicator->SetInputImage(resample->GetOutput());
   duplicator->Update();
   InputImageType::Pointer output=duplicator->GetOutput();
   
@@ -61,18 +76,29 @@ int main(int argc, char* argv[])
   LabelReaderType::Pointer labelReader = LabelReaderType::New();
   labelReader->SetFileName(labelFileName);
   labelReader->Update();
+
+  typedef itk::NearestNeighborInterpolateImageFunction<LabelImageType> NNType;
+  NNType::Pointer NN = NNType::New();
+  typedef itk::ResampleImageFilter<LabelImageType,LabelImageType> LabelResampleFilterType;
+  LabelResampleFilterType::Pointer labelResample = LabelResampleFilterType::New();
+  labelResample->SetInput(labelReader->GetOutput());
+  labelResample->SetInterpolator(NN);
+  labelResample->SetReferenceImage(referenceReader->GetOutput());
+  labelResample->UseReferenceImageOn();
+  labelResample->Update();
+  
   
   // Copy labelmap image
   typedef itk::ImageDuplicator< LabelImageType > LabelDuplicatorType;
   LabelDuplicatorType::Pointer labelDuplicator = LabelDuplicatorType::New();
-  labelDuplicator->SetInputImage(labelReader->GetOutput());
+  labelDuplicator->SetInputImage(labelResample->GetOutput());
   labelDuplicator->Update();
   
   // Compute tooth mask
   LabelImageType::Pointer toothMask;
   typedef itk::ThresholdImageFilter<LabelImageType> ThresholdFilterType;
   ThresholdFilterType::Pointer thresholdFilter = ThresholdFilterType::New();
-  thresholdFilter->SetInput(labelReader->GetOutput());
+  thresholdFilter->SetInput(labelResample->GetOutput());
   thresholdFilter->ThresholdOutside(1,1);
   thresholdFilter->Update();
   toothMask = thresholdFilter->GetOutput();
@@ -80,18 +106,18 @@ int main(int argc, char* argv[])
   //Generate noise image
   typedef itk::LabelStatisticsImageFilter< InputImageType, LabelImageType > StatisticsFilterType;
   StatisticsFilterType::Pointer statisticsFilter = StatisticsFilterType::New();
-  statisticsFilter->SetInput(reader->GetOutput());
-  statisticsFilter->SetLabelInput(labelReader->GetOutput());
+  statisticsFilter->SetInput(resample->GetOutput());
+  statisticsFilter->SetLabelInput(labelResample->GetOutput());
   statisticsFilter->Update();
   PixelType mean = statisticsFilter->GetMean(darkLabel);
   PixelType std = statisticsFilter->GetSigma(darkLabel);
   // Create empty noise image
   typedef itk::Image<float,3> NoiseImageType;
   NoiseImageType::Pointer noise=NoiseImageType::New();
-  noise->SetRegions(reader->GetOutput()->GetLargestPossibleRegion());
-  noise->SetSpacing(reader->GetOutput()->GetSpacing());
-  noise->SetDirection(reader->GetOutput()->GetDirection());
-  noise->SetOrigin(reader->GetOutput()->GetOrigin());
+  noise->SetRegions(resample->GetOutput()->GetLargestPossibleRegion());
+  noise->SetSpacing(resample->GetOutput()->GetSpacing());
+  noise->SetDirection(resample->GetOutput()->GetDirection());
+  noise->SetOrigin(resample->GetOutput()->GetOrigin());
   noise->Allocate(true);
   // Add gaussian noise to empty noise image
   typedef itk::AdditiveGaussianNoiseImageFilter<NoiseImageType,NoiseImageType> NoiseFilterType;
@@ -112,7 +138,7 @@ int main(int argc, char* argv[])
   typedef itk::ImageRegionIteratorWithIndex<LabelImageType> LabelIteratorType;
   InputIteratorType itout(output,output->GetLargestPossibleRegion());
   InputIteratorType itnoise(clampFilter->GetOutput(),clampFilter->GetOutput()->GetLargestPossibleRegion());
-  LabelIteratorType itmask(labelReader->GetOutput(),labelReader->GetOutput()->GetLargestPossibleRegion());
+  LabelIteratorType itmask(labelResample->GetOutput(),labelResample->GetOutput()->GetLargestPossibleRegion());
 
   for(itmask.GoToBegin(), itnoise.GoToBegin(), itout.GoToBegin(); !itout.IsAtEnd(); ++itmask, ++itnoise, ++itout)
   {
@@ -137,31 +163,17 @@ int main(int argc, char* argv[])
     point+=forwardDisplacement;
     LabelImageType::IndexType displacedIndex;
     output->TransformPhysicalPointToIndex(point,displacedIndex);
-    if(labelReader->GetOutput()->GetPixel(displacedIndex) == toothLabel)
+    if(labelResample->GetOutput()->GetPixel(displacedIndex) == toothLabel)
     {
-      itout.Set(reader->GetOutput()->GetPixel(index));
+      itout.Set(resample->GetOutput()->GetPixel(index));
       labelDuplicator->GetOutput()->SetPixel(index,toothLabel);
     }
   }
-
-  // Read reference image used to upsample output image
-  typedef itk::Image<unsigned char,3> ReferenceImageType; // Just used for size, spacing,...
-  typedef itk::ImageFileReader<InputImageType> ReferenceReaderType;
-  ReferenceReaderType::Pointer referenceReader = ReferenceReaderType::New();
-  referenceReader->SetFileName(referenceFileName);
-  referenceReader->Update();
-  
-  typedef itk::ResampleImageFilter<InputImageType,InputImageType> ResampleFilterType;
-  ResampleFilterType::Pointer resample = ResampleFilterType::New();
-  resample->SetInput(output);
-  resample->SetReferenceImage(referenceReader->GetOutput());
-  resample->UseReferenceImageOn();
-  resample->Update();
  
   // Write output image 
   typedef itk::ImageFileWriter<InputImageType> WriterType;
   WriterType::Pointer writer = WriterType::New();
-  writer->SetInput(resample->GetOutput());
+  writer->SetInput(output);
   writer->SetFileName(outputFileName);
   writer->Update();
  

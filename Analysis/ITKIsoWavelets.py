@@ -22,27 +22,29 @@ fftFilter = itk.ForwardFFTImageFilter.New(castFilter)
 fftFilter.Update()
 ComplexType=itk.output(fftFilter.GetOutput())
 RealImageType = itk.Image[itk.F,3]
+inverseFFT = InverseFFTType = itk.InverseFFTImageFilter[ ComplexType, RealImageType].New()
 # Create Forward Filter Bank
 PointType=itk.Point[itk.D,3]
 SimoncelliType = itk.SimoncelliIsotropicWavelet[itk.F,3,PointType]
 forwardFilterBankType = itk.WaveletFrequencyFilterBankGenerator[ComplexType,SimoncelliType]
-
 forwardFilterBank = forwardFilterBankType.New()
 forwardFilterBank.SetHighPassSubBands( high_sub_bands )
 forwardFilterBank.SetSize( fftFilter.GetOutput().GetLargestPossibleRegion().GetSize() )
 forwardFilterBank.Update()
-
+# Store wavelet filter bank.
+for band in range(0,high_sub_bands):
+  inverseFFT.SetInput( forwardFilterBank.GetOutput( band ) )
+  itk.ImageFileWriter.New(Input=inverseFFT.GetOutput(), FileName=outputImage+str(band)+"FilterBank.nrrd").Update()
 
 wavelet = itk.WaveletFrequencyForward[ComplexType,ComplexType, forwardFilterBankType].New()
 wavelet.SetHighPassSubBands(high_sub_bands)
 wavelet.SetLevels( levels )
 wavelet.SetInput(fftFilter.GetOutput())
 wavelet.Update()
-inverseFFT = InverseFFTType = itk.InverseFFTImageFilter[ ComplexType, RealImageType].New()
 
 for level in range(0, levels):
     for band in range(0,high_sub_bands):
-      nOutput = 1 + level * wavelet.GetHighPassSubBands() + band;
+      nOutput = level * wavelet.GetHighPassSubBands() + band;
       print "OutputIndex : " + str(nOutput)
       print "Level: " + str(level + 1) + " / " +str(wavelet.GetLevels())
       print "Band: " + str(band + 1) + " / " + str(wavelet.GetHighPassSubBands())
@@ -58,13 +60,11 @@ for level in range(0, levels):
       image.SetOrigin(origin)
       itk.ImageFileWriter.New(Input=image, FileName=outputImage+str(nOutput)+".nrrd").Update()
 
-      inverseFFT.SetInput( forwardFilterBank.GetOutput( band ) )
-      itk.ImageFileWriter.New(Input=inverseFFT.GetOutput(), FileName=outputImage+str(band)+"FilterBank.nrrd").Update()
-      
-inverseFFT.SetInput( wavelet.GetOutput(0) )
+approxIndex = int(wavelet.GetTotalOutputs() - 1)
+inverseFFT.SetInput( wavelet.GetOutput(approxIndex) )
 inverseFFT.Update()
 image=inverseFFT.GetOutput()
 image.SetSpacing(spacing*(2**levels))
 image.SetDirection(direction)
 image.SetOrigin(origin)
-itk.ImageFileWriter.New(Input=image, FileName=outputImage+str(0)+".nrrd").Update()
+itk.ImageFileWriter.New(Input=image, FileName=outputImage+str(approxIndex)+".nrrd").Update()

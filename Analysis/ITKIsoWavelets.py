@@ -22,7 +22,7 @@ fftFilter = itk.ForwardFFTImageFilter.New(castFilter)
 fftFilter.Update()
 ComplexType=itk.output(fftFilter.GetOutput())
 RealImageType = itk.Image[itk.F,3]
-inverseFFT = InverseFFTType = itk.InverseFFTImageFilter[ ComplexType, RealImageType].New()
+inverseFFT = itk.InverseFFTImageFilter[ ComplexType, RealImageType].New()
 # Create Forward Filter Bank
 PointType=itk.Point[itk.D,3]
 SimoncelliType = itk.SimoncelliIsotropicWavelet[itk.F,3,PointType]
